@@ -1,0 +1,217 @@
+import requests
+import pandas as pd
+import time
+import base64
+import json
+
+
+CLIENT_ID = ""
+CLIENT_SECRET = ""
+REDIRECT_URI = "https://www.zerofuro.com.br/"
+AUTHENTICATION_CODE = ""
+ACCESS_TOKEN = ""
+REFRESH_TOKEN = ""
+TESTE = False
+
+
+def salvar_tokens():
+    global ACCESS_TOKEN
+    global REFRESH_TOKEN
+    data = {"access_token": ACCESS_TOKEN, "refresh_token": REFRESH_TOKEN}
+
+    with open('tokens.json', 'w') as f:
+        json.dump(data, f)
+
+def carregar_tokens():
+    global ACCESS_TOKEN
+    global REFRESH_TOKEN
+
+    with open('tokens.json', 'r') as f:
+        data = json.load(f)
+        ACCESS_TOKEN = data["access_token"]
+        REFRESH_TOKEN = data["refresh_token"]
+
+def obter_token():
+    url = "https://www.bling.com.br/Api/v3/oauth/token"
+    credentials = f"{CLIENT_ID}:{CLIENT_SECRET}"
+    encoded_credentials = base64.b64encode(credentials.encode()).decode()
+
+    global ACCESS_TOKEN
+    global REFRESH_TOKEN
+
+    headers = {
+        "Authorization": f"Basic {encoded_credentials}",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+    payload = {
+        "grant_type": "authorization_code",
+        "code": AUTHENTICATION_CODE,
+        "redirect_uri": REDIRECT_URI,
+    }
+
+    response = requests.post(url, headers=headers, data=payload)
+
+    if response.status_code == 200:
+        token_data = response.json()
+        print("Access token obtido com sucesso:", token_data)
+        ACCESS_TOKEN = token_data["access_token"]
+        REFRESH_TOKEN = token_data["refresh_token"]
+        salvar_tokens()
+    else:
+        print("Erro ao obter access token:", response.text)
+        get_new_access_token()  # Usa o refresh token para obter um novo access token
+
+def get_new_access_token():
+    url = "https://www.bling.com.br/Api/v3/oauth/token"
+    credentials = f"{CLIENT_ID}:{CLIENT_SECRET}"
+    encoded_credentials = base64.b64encode(credentials.encode()).decode()
+
+    global ACCESS_TOKEN
+    global REFRESH_TOKEN
+
+    headers = {
+        "Authorization": f"Basic {encoded_credentials}",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+    payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": REFRESH_TOKEN,
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET
+    }
+
+    response = requests.post(url, headers=headers, data=payload)
+
+    if response.status_code == 200:
+        token_data = response.json()
+        ACCESS_TOKEN = token_data["access_token"]
+        REFRESH_TOKEN = token_data["refresh_token"]
+        salvar_tokens()
+        print("Refresh token obtido com sucesso:", token_data)
+    else:
+        carregar_tokens()
+        print("Erro ao obter refresh token:", response.text)
+
+def consultar_relatorios_pagina(pagina):
+    global TESTE
+    limite  = 20 if TESTE else 100
+    url = f"https://api.bling.com.br/Api/v3/pedidos/vendas?pagina={pagina}&limite={limite}"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        return response.json()
+    return None
+
+def consultar_todas_as_paginas():
+    pagina = 1
+    relatorios_acumulados = []
+
+    while True:
+        relatorios = consultar_relatorios_pagina(pagina)
+
+        if not relatorios or 'data' not in relatorios or not relatorios['data']:
+            break
+
+        relatorios_acumulados.extend(relatorios['data'])
+
+        if len(relatorios['data']) < 100:
+            break
+
+        pagina += 1
+        if TESTE:
+            break
+
+    return relatorios_acumulados
+
+def processar_dados(relatorios):
+    relatorios_acumulados = []
+
+    for pedido in relatorios:
+        pedido_id = pedido.get('id', None)
+        if not pedido_id:
+            continue
+
+        url = f"https://api.bling.com.br/Api/v3/pedidos/vendas/{pedido_id}"
+        headers = {
+            "Authorization": f"Bearer {ACCESS_TOKEN}",
+            "Content-Type": "application/json",
+        }
+
+        response = requests.get(url, headers=headers)
+        
+        time.sleep(0.5)
+
+        if response.status_code == 200:
+            relatorio = response.json()
+            if 'data' in relatorio:
+                relatorios_acumulados.append(relatorio)
+                
+
+    if len (relatorios_acumulados) > 0:
+        return pd.json_normalize(relatorios_acumulados)
+    return pd.DataFrame()
+
+salvar_tokens()
+obter_token()
+carregar_tokens()
+
+relatorios = consultar_todas_as_paginas()
+df_final_completo = processar_dados(relatorios) if relatorios else pd.DataFrame()
+
+def tratar_dados(df_final_completo):
+    if 'data.itens' not in df_final_completo.columns:
+        return pd.DataFrame()
+
+    df_explodido = df_final_completo.explode('data.itens', ignore_index=True)
+    df_itens_explodido = pd.json_normalize(df_explodido['data.itens'])
+
+    df_itens_explodido = df_itens_explodido[['codigo', 'valor', 'descricao', 'quantidade']]
+
+    renomeacao_colunas = {
+        'data.id': 'Pedido_ID',
+        'data.data': 'Data',
+        'data.contato.id': 'Cliente_ID',
+        'data.contato.nome': 'Nome',
+        'data.contato.numeroDocumento': 'Documento',
+        'data.contato.tipoPessoa':'Natureza',
+        'data.transporte.etiqueta.municipio':'Município',
+        'data.transporte.etiqueta.uf':'UF',
+        'data.numero': 'Numero_Pedido',
+        'data.notaFiscal.id': 'NF_ID',
+        'data.situacao.valor': 'Situação',
+        'data.naturezaOperacao.id': 'Natureza_Operação',
+        'data.loja.id': 'Loja_ID',
+        'data.vendedor.id': 'Vendedor_ID',
+        'codigo': 'Código_Item',
+        'valor': 'Valor_Item',
+        'data.desconto.valor':'Desconto',
+        'descricao': 'Descricao_Item',
+        'quantidade': 'Quantidade_Item',
+        'data.outrasDespesas':'Despesas',
+        'data.observacoes':'Observações',
+        'data.observacoesInternas':'Observações Internas'
+        }
+
+    df_final = pd.concat([df_explodido.reset_index(drop=True), df_itens_explodido], axis=1)
+    df_final = df_final.rename(columns=renomeacao_colunas)
+    return df_final
+
+
+
+obter_token()
+relatorios = consultar_todas_as_paginas()
+df_final_completo = processar_dados(relatorios)
+
+if not df_final_completo.empty:
+    df_final_vendas = tratar_dados(df_final_completo)
+else:
+    df_final_vendas = pd.DataFrame()
+
+df_final_vendas
