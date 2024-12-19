@@ -4,9 +4,8 @@ import time
 import base64
 import json
 
-
-CLIENT_ID = ""
-CLIENT_SECRET = ""
+CLIENT_ID = "e54144a5b51c3c931133d95ba48c1698a766afec"
+CLIENT_SECRET = "d590501ad197808124178928e3e655d79554d8a9ed53861444250e25fedf"
 REDIRECT_URI = "https://www.zerofuro.com.br/"
 AUTHENTICATION_CODE = ""
 ACCESS_TOKEN = ""
@@ -14,24 +13,37 @@ REFRESH_TOKEN = ""
 TESTE = False
 
 
-def salvar_tokens():
-    global ACCESS_TOKEN
-    global REFRESH_TOKEN
-    data = {"access_token": ACCESS_TOKEN, "refresh_token": REFRESH_TOKEN}
+def log(msg):
+    global TESTE
 
-    with open('tokens.json', 'w') as f:
-        json.dump(data, f)
+    if TESTE:
+        print(msg)
 
-def carregar_tokens():
-    global ACCESS_TOKEN
-    global REFRESH_TOKEN
+def get_keys():
+    response = requests.get("https://bling-2d3ac-default-rtdb.firebaseio.com/keys.json")
+    if response.status_code == 200:
+        try:
+            data = response.json()
+            return {
+                "access": data.get("access"),
+                "refresh": data.get("refresh"),
+                "auth": data.get("auth")
+            }
+        except json.JSONDecodeError as e:  
+            print(f"Error decoding JSON: {e}")
+            return None
+    else:
+        print("Erro ao obter dados:", response.status_code, response.text)
+        return None
 
-    with open('tokens.json', 'r') as f:
-        data = json.load(f)
-        ACCESS_TOKEN = data["access_token"]
-        REFRESH_TOKEN = data["refresh_token"]
+def update_keys(updated_values):
+    response = requests.patch("https://bling-2d3ac-default-rtdb.firebaseio.com/keys.json", json=updated_values)
+    if response.status_code == 200:
+        print("Dados atualizados com sucesso.")
+    else:
+        print("Erro ao atualizar dados:", response.status_code, response.text)
 
-def obter_token():
+def obter_token(auth, refresh):
     url = "https://www.bling.com.br/Api/v3/oauth/token"
     credentials = f"{CLIENT_ID}:{CLIENT_SECRET}"
     encoded_credentials = base64.b64encode(credentials.encode()).decode()
@@ -46,7 +58,7 @@ def obter_token():
 
     payload = {
         "grant_type": "authorization_code",
-        "code": AUTHENTICATION_CODE,
+        "code": auth,
         "redirect_uri": REDIRECT_URI,
     }
 
@@ -57,12 +69,15 @@ def obter_token():
         print("Access token obtido com sucesso:", token_data)
         ACCESS_TOKEN = token_data["access_token"]
         REFRESH_TOKEN = token_data["refresh_token"]
-        salvar_tokens()
+        update_keys({
+            "access": token_data["access_token"],
+            "refresh": token_data["refresh_token"]
+        })
     else:
         print("Erro ao obter access token:", response.text)
-        get_new_access_token()  # Usa o refresh token para obter um novo access token
+        get_new_access_token(refresh)  # Usa o refresh token para obter um novo access token
 
-def get_new_access_token():
+def get_new_access_token(refresh):
     url = "https://www.bling.com.br/Api/v3/oauth/token"
     credentials = f"{CLIENT_ID}:{CLIENT_SECRET}"
     encoded_credentials = base64.b64encode(credentials.encode()).decode()
@@ -77,7 +92,7 @@ def get_new_access_token():
 
     payload = {
         "grant_type": "refresh_token",
-        "refresh_token": REFRESH_TOKEN,
+        "refresh_token": refresh,
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET
     }
@@ -88,16 +103,20 @@ def get_new_access_token():
         token_data = response.json()
         ACCESS_TOKEN = token_data["access_token"]
         REFRESH_TOKEN = token_data["refresh_token"]
-        salvar_tokens()
+        update_keys({
+            "access": token_data["access_token"],
+            "refresh": token_data["refresh_token"]
+        })
         print("Refresh token obtido com sucesso:", token_data)
     else:
-        carregar_tokens()
         print("Erro ao obter refresh token:", response.text)
 
 def consultar_relatorios_pagina(pagina):
     global TESTE
+    global ACCESS_TOKEN
+
     limite  = 20 if TESTE else 100
-    url = f"https://api.bling.com.br/Api/v3/pedidos/vendas?pagina={pagina}&limite={limite}"
+    url = f"https://api.bling.com.br/Api/v3/produtos?pagina={pagina}&limite={limite}"
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json",
@@ -107,6 +126,7 @@ def consultar_relatorios_pagina(pagina):
 
     if response.status_code == 200:
         return response.json()
+    print("Erro na pagina:",pagina, response.text)
     return None
 
 def consultar_todas_as_paginas():
@@ -114,16 +134,27 @@ def consultar_todas_as_paginas():
     relatorios_acumulados = []
 
     while True:
+        print('começando pagina', pagina)
         relatorios = consultar_relatorios_pagina(pagina)
+        print('terminando pagina', pagina)
+
+        time.sleep(1)
+
+        if relatorios is None: 
+            print('relatorios vazios')
+            break
 
         if not relatorios or 'data' not in relatorios or not relatorios['data']:
+            print('parado')
             break
 
         relatorios_acumulados.extend(relatorios['data'])
 
         if len(relatorios['data']) < 100:
+            print('lalallalallala')
             break
-
+        
+        print(pagina, len(relatorios['data']))
         pagina += 1
         if TESTE:
             break
@@ -133,20 +164,26 @@ def consultar_todas_as_paginas():
 def processar_dados(relatorios):
     relatorios_acumulados = []
 
-    for pedido in relatorios:
-        pedido_id = pedido.get('id', None)
-        if not pedido_id:
+    tamanho = len(relatorios)
+    i = 1
+    print('tem numero de relatorios', tamanho)
+    for produtos in relatorios:
+        produtos_id = produtos.get('id', None)
+        if not produtos_id:
             continue
 
-        url = f"https://api.bling.com.br/Api/v3/pedidos/vendas/{pedido_id}"
+        url = f"https://api.bling.com.br/Api/v3/produtos/{produtos_id}"
         headers = {
             "Authorization": f"Bearer {ACCESS_TOKEN}",
             "Content-Type": "application/json",
         }
 
+
         response = requests.get(url, headers=headers)
         
-        time.sleep(0.5)
+        time.sleep(1)
+        print('processou produto id', id, i)
+        i +=1
 
         if response.status_code == 200:
             relatorio = response.json()
@@ -158,60 +195,48 @@ def processar_dados(relatorios):
         return pd.json_normalize(relatorios_acumulados)
     return pd.DataFrame()
 
-salvar_tokens()
-obter_token()
-carregar_tokens()
+tokens = get_keys()
+obter_token(tokens['auth'], tokens['refresh'])
+print(ACCESS_TOKEN, REFRESH_TOKEN)
 
 relatorios = consultar_todas_as_paginas()
 df_final_completo = processar_dados(relatorios) if relatorios else pd.DataFrame()
 
 def tratar_dados(df_final_completo):
-    if 'data.itens' not in df_final_completo.columns:
-        return pd.DataFrame()
+    colunas_necessarias = [
+    'data.id',
+    'data.nome',
+    'data.codigo',
+    'data.preco',
+    'data.estoque.saldoVirtualTotal',
+    'data.unidade',
+    'data.fornecedor.contato.nome',
+    ]
 
-    df_explodido = df_final_completo.explode('data.itens', ignore_index=True)
-    df_itens_explodido = pd.json_normalize(df_explodido['data.itens'])
-
-    df_itens_explodido = df_itens_explodido[['codigo', 'valor', 'descricao', 'quantidade']]
 
     renomeacao_colunas = {
-        'data.id': 'Pedido_ID',
-        'data.data': 'Data',
-        'data.contato.id': 'Cliente_ID',
-        'data.contato.nome': 'Nome',
-        'data.contato.numeroDocumento': 'Documento',
-        'data.contato.tipoPessoa':'Natureza',
-        'data.transporte.etiqueta.municipio':'Município',
-        'data.transporte.etiqueta.uf':'UF',
-        'data.numero': 'Numero_Pedido',
-        'data.notaFiscal.id': 'NF_ID',
-        'data.situacao.valor': 'Situação',
-        'data.naturezaOperacao.id': 'Natureza_Operação',
-        'data.loja.id': 'Loja_ID',
-        'data.vendedor.id': 'Vendedor_ID',
-        'codigo': 'Código_Item',
-        'valor': 'Valor_Item',
-        'data.desconto.valor':'Desconto',
-        'descricao': 'Descricao_Item',
-        'quantidade': 'Quantidade_Item',
-        'data.outrasDespesas':'Despesas',
-        'data.observacoes':'Observações',
-        'data.observacoesInternas':'Observações Internas'
-        }
+    'data.id':'Produto_ID',
+    'data.nome':'Nome',
+    'data.codigo':'Código SKU',
+    'data.preco':'Preço',
+    'data.estoque.saldoVirtualTotal':'Estoque Virtual',
+    'data.unidade':'Unidade',
+    'data.fornecedor.contato.nome':'Fornecedor'
+    }  
 
-    df_final = pd.concat([df_explodido.reset_index(drop=True), df_itens_explodido], axis=1)
+    df_final = df_final_completo[colunas_necessarias]
+
     df_final = df_final.rename(columns=renomeacao_colunas)
+
     return df_final
-
-
-
-obter_token()
-relatorios = consultar_todas_as_paginas()
-df_final_completo = processar_dados(relatorios)
-
+                                                 
 if not df_final_completo.empty:
-    df_final_vendas = tratar_dados(df_final_completo)
+    df_final_produtos = tratar_dados(df_final_completo)
 else:
-    df_final_vendas = pd.DataFrame()
+    df_final_produtos = pd.DataFrame()
 
-df_final_vendas
+df_final_produtos
+
+
+
+
