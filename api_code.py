@@ -8,8 +8,8 @@ import os
 import subprocess
 
 
-CLIENT_ID = ""
-CLIENT_SECRET = ""
+CLIENT_ID = "e54144a5b51c3c931133d95ba48c1698a766afec"
+CLIENT_SECRET = "d590501ad197808124178928e3e655d79554d8a9ed53861444250e25fedf"
 REDIRECT_URI = "https://www.zerofuro.com.br/"
 AUTHENTICATION_CODE = ""
 ACCESS_TOKEN = ""
@@ -381,7 +381,7 @@ num_tabelas = len(tabelas)
 for i in range(num_tabelas): #1
 
     tabela = tabelas[i] #tabela que quer para gerar separadamente
-    temp_file = f"C:/Users/sigab/OneDrive - Siga Financeiro e Controladoria/API/API_ZEROFURO/Excel/{tabela["nome"]}.xlsx" 
+    temp_file = f"C:/Users/sigab/OneDrive - Siga Financeiro e Controladoria/API/API_ZEROFURO/Excel/{tabela["nome"]}.xlsx" # garantir que a pasta q isso vai ser salvo e visivel
 
     if not os.path.exists(temp_file):
 
